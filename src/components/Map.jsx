@@ -17,8 +17,14 @@ export function MapView({ meta2x2, sortKey, children }) {
   const [heatmapOn, setHeatmapOn] = useState(true);
 
   const valueRange  = useHeatmap(mapRef, meta2x2, sortKey, heatmapOn);
-  const networkData = useNetworkData();
-  const { contextMenu, setContextMenu, splitEdge, deleteNode } = useNetworkEditor(mapRef, networkData);
+  const { data: networkData, reload: reloadNetwork } = useNetworkData();
+  const { contextMenu, setContextMenu, splitEdge, deleteNode, saveNetwork, dirty, saving } =
+    useNetworkEditor(mapRef, networkData);
+
+  const handleSave = async () => {
+    await saveNetwork();
+    reloadNetwork();
+  };
 
   return (
     <>
@@ -34,10 +40,20 @@ export function MapView({ meta2x2, sortKey, children }) {
           deleteNode={deleteNode}
         />
 
+        {/* Save network button */}
+        {dirty && (
+          <button
+            className="saveNetworkBtn"
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save network"}
+          </button>
+        )}
+
         {/* Heatmap toggle */}
         <div className="mapOverlayControl">
           <label className="toggleLabel">
-            <span className="toggleIcon">🌡</span>
             <span className="toggleText">Heatmap</span>
             <span
               className={`toggleTrack ${heatmapOn ? "on" : ""}`}

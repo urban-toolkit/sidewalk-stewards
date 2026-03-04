@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 const EDGE_SOURCE = "editor-edges-source";
 const EDGE_LAYER  = "editor-edges-layer";
@@ -68,8 +68,7 @@ function buildCaches({ nodes, edges }) {
   const edgeFC = {
     type: "FeatureCollection",
     features: [...edges.values()].flatMap((e) => {
-      const coords = e.nodeIds.map((id) => nodes.get(id)).filter(Boolean).map((n) =>
-        [n.lng, n.lat]);
+      const coords = e.nodeIds.map((id) => nodes.get(id)).filter(Boolean).map((n) => [n.lng, n.lat]);
       if (coords.length < 2) return [];
       const f = {
         type: "Feature",
@@ -98,6 +97,25 @@ function closestSegmentIdx(nodeIds, nodes, lng, lat) {
   return best;
 }
 
+// ── Export current graph state → clean GeoJSON FeatureCollection ──────────────
+
+function exportToGeoJSON({ nodes, edges }) {
+  const features = [];
+  for (const edge of edges.values()) {
+    const coords = edge.nodeIds
+      .map((id) => nodes.get(id))
+      .filter(Boolean)
+      .map((n) => [n.lng, n.lat]);
+    if (coords.length < 2) continue;
+    features.push({
+      type: "Feature",
+      properties: {},
+      geometry: { type: "LineString", coordinates: coords },
+    });
+  }
+  return { type: "FeatureCollection", features };
+}
+
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useNetworkEditor(mapRef, networkData) {
@@ -108,6 +126,8 @@ export function useNetworkEditor(mapRef, networkData) {
   const hoveredNodeRef = useRef(null); // nodeId currently under cursor
 
   const [contextMenu, setContextMenu] = useState(null);
+  const [dirty, setDirty]             = useState(false);   // true when unsaved edits exist
+  const [saving, setSaving]           = useState(false);
 
   // ── Full rebuild: parse + cache + push to map ───────────────────────────────
   const rebuild = (map, geojson) => {
@@ -115,6 +135,7 @@ export function useNetworkEditor(mapRef, networkData) {
     const cache = buildCaches(net);
     netRef.current = net;
     cacheRef.current = cache;
+    setDirty(false);
     if (map && addedRef.current) {
       map.getSource(EDGE_SOURCE)?.setData(cache.edgeFC);
       map.getSource(NODE_SOURCE)?.setData(cache.nodeFC);
@@ -125,6 +146,33 @@ export function useNetworkEditor(mapRef, networkData) {
     if (!networkData) return;
     rebuild(mapRef.current, networkData);
   }, [networkData, mapRef]);
+
+  // ── Helper: mark the network as modified ────────────────────────────────────
+  const markDirty = () => setDirty(true);
+
+  // ── Save: export current state → POST to API → write to disk ────────────────
+  const saveNetwork = useCallback(async () => {
+    const geojson = exportToGeoJSON(netRef.current);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/save-network", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(geojson),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Save failed (${res.status}): ${text}`);
+      }
+      setDirty(false);
+      console.log("Network saved successfully");
+    } catch (err) {
+      console.error("Failed to save network:", err);
+      alert(`Failed to save network: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
 
   // ── Mount layers + events ───────────────────────────────────────────────────
   useEffect(() => {
@@ -230,6 +278,15 @@ export function useNetworkEditor(mapRef, networkData) {
         cacheRef.current.edgeFC.features.push(newFeat);
       }
 
+      // If the node actually moved (not a connect), mark dirty
+      const { nodeId: dragId, origLng, origLat } = draggingRef.current;
+      const draggedNode = netRef.current.nodes.get(dragId);
+      if (draggedNode && (draggedNode.lng !== origLng || draggedNode.lat !== origLat)) {
+        markDirty();
+      }
+      // If a new edge was created via snap, also dirty
+      if (target) markDirty();
+
       map.getSource(NODE_SOURCE)?.setData(cacheRef.current.nodeFC);
       map.getSource(EDGE_SOURCE)?.setData(cacheRef.current.edgeFC);
       draggingRef.current = null;
@@ -242,10 +299,10 @@ export function useNetworkEditor(mapRef, networkData) {
       setContextMenu({ type: "edge", edgeId, x: e.point.x, y: e.point.y, lng: e.lngLat.lng, lat: e.lngLat.lat });
     };
 
-    // ── NEW: right-click on a node ────────────────────────────────────────────
+    // ── Right-click on a node ─────────────────────────────────────────────────
     const onNodeContextMenu = (e) => {
       e.preventDefault();
-      if (draggingRef.current) return; // ignore right-clicks during drag
+      if (draggingRef.current) return;
       const nodeId = e.features?.[0]?.properties?.id;
       if (!nodeId) return;
       setContextMenu({ type: "node", nodeId, x: e.point.x, y: e.point.y });
@@ -296,25 +353,15 @@ export function useNetworkEditor(mapRef, networkData) {
       map.addLayer({
         id: NODE_LAYER, type: "circle", source: NODE_SOURCE, minzoom: MICRO_ZOOM,
         paint: {
-          "circle-radius": [
-            "interpolate", ["linear"], ["zoom"],
-            16, ["case", ["boolean", ["feature-state", "dragging"], false], 6.5, ["boolean", ["feature-state", "hover"], false], 5.0, 2.5],
-            18, ["case", ["boolean", ["feature-state", "dragging"], false], 9.0, ["boolean", ["feature-state", "hover"], false], 7.0, 4.5],
-            20, ["case", ["boolean", ["feature-state", "dragging"], false], 13,  ["boolean", ["feature-state", "hover"], false], 11,  7  ],
-          ],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 18, 4, 20, 7],
           "circle-color": [
             "case",
-            ["boolean", ["feature-state", "dragging"], false], "#e85d04",
-            "#ffffff",
+            ["boolean", ["feature-state", "dragging"], false], "#ff0000",
+            ["boolean", ["feature-state", "hover"],    false], "#ffcc00",
+            "#e85d04",
           ],
-          "circle-stroke-color": "#e85d04",
-          "circle-stroke-width": [
-            "case",
-            ["boolean", ["feature-state", "dragging"], false], 0,
-            ["boolean", ["feature-state", "hover"],   false], 2.5,
-            1.5,
-          ],
-          "circle-opacity": 1,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
         },
       });
 
@@ -324,7 +371,7 @@ export function useNetworkEditor(mapRef, networkData) {
       map.on("mousemove",              onMouseMove);
       map.on("mouseup",                onMouseUp);
       map.on("contextmenu", EDGE_HIT,  onEdgeContextMenu);
-      map.on("contextmenu", NODE_LAYER, onNodeContextMenu); // ← NEW
+      map.on("contextmenu", NODE_LAYER, onNodeContextMenu);
       map.on("click",                  onMapClick);
       map.on("mouseenter", NODE_LAYER, onNodeEnter);
       map.on("mouseleave", NODE_LAYER, onNodeLeave);
@@ -343,7 +390,7 @@ export function useNetworkEditor(mapRef, networkData) {
       map.off("mousemove",              onMouseMove);
       map.off("mouseup",                onMouseUp);
       map.off("contextmenu", EDGE_HIT,  onEdgeContextMenu);
-      map.off("contextmenu", NODE_LAYER, onNodeContextMenu); // ← NEW
+      map.off("contextmenu", NODE_LAYER, onNodeContextMenu);
       map.off("click",                  onMapClick);
       map.off("mouseenter", NODE_LAYER, onNodeEnter);
       map.off("mouseleave", NODE_LAYER, onNodeLeave);
@@ -410,6 +457,7 @@ export function useNetworkEditor(mapRef, networkData) {
       map.getSource(EDGE_SOURCE)?.setData(edgeFC);
     }
     setContextMenu(null);
+    markDirty();
   };
 
   // ── Delete node ─────────────────────────────────────────────────────────────
@@ -445,7 +493,8 @@ export function useNetworkEditor(mapRef, networkData) {
       map.getSource(EDGE_SOURCE)?.setData(edgeFC);
     }
     setContextMenu(null);
+    markDirty();
   };
 
-  return { contextMenu, setContextMenu, splitEdge, deleteNode };
+  return { contextMenu, setContextMenu, splitEdge, deleteNode, saveNetwork, dirty, saving };
 }

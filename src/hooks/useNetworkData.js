@@ -1,36 +1,41 @@
-import { useEffect, useState } from "react";
-import shp from "shpjs";
+import { useEffect, useState, useCallback } from "react";
 
 let cachedData = null;
 let loadingPromise = null;
 
-/**
- * Loads the sidewalk network shapefile once and caches the parsed GeoJSON.
- * Shared across all consumers — only one fetch happens.
- */
 export function useNetworkData() {
   const [data, setData] = useState(cachedData);
+
+  const load = useCallback(() => {
+    const url = `/network.geojson?t=${Date.now()}`;
+
+    loadingPromise = fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to fetch network.geojson: ${res.status}`);
+        return res.json();
+      })
+      .then((fc) => {
+        cachedData = fc;
+        setData(fc);
+        return fc;
+      });
+
+    return loadingPromise;
+  }, []);
 
   useEffect(() => {
     if (cachedData) {
       setData(cachedData);
       return;
     }
+    load().catch((err) => console.error("Failed to load network data:", err));
+  }, [load]);
 
-    if (!loadingPromise) {
-      const baseUrl = `${window.location.origin}/original/original_network`;
-      loadingPromise = shp(baseUrl).then((geojson) => {
-        // shpjs may return a single FeatureCollection or an array
-        const fc = Array.isArray(geojson) ? geojson[0] : geojson;
-        cachedData = fc;
-        return fc;
-      });
-    }
+  const reload = useCallback(() => {
+    cachedData = null;
+    loadingPromise = null;
+    return load();
+  }, [load]);
 
-    loadingPromise
-      .then((fc) => setData(fc))
-      .catch((err) => console.error("Failed to load network data:", err));
-  }, []);
-
-  return data;
+  return { data, reload };
 }
