@@ -12,11 +12,12 @@ function formatValue(v) {
   return v.toFixed(2);
 }
 
-export function MapView({ meta2x2, sortKey, children }) {
+export function MapView({ meta2x2, sortKey, filterIds = null, children }) {
   const { mapContainerRef, mapRef, bounds, mapZoom, flyToTile, fitToTile } = useMap();
   const [heatmapOn, setHeatmapOn] = useState(true);
 
-  const valueRange  = useHeatmap(mapRef, meta2x2, sortKey, heatmapOn);
+  const valueRange = useHeatmap(mapRef, meta2x2, sortKey, heatmapOn && mapZoom < 16, filterIds);
+
   const { data: networkData, reload: reloadNetwork } = useNetworkData();
   const { contextMenu, setContextMenu, splitEdge, deleteNode, saveNetwork, dirty, saving } =
     useNetworkEditor(mapRef, networkData);
