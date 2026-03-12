@@ -5,18 +5,20 @@ import { tileToLngLatBounds } from "../utils/tileUtils";
 const MAP_STYLE = {
   version: 8,
   sources: {
-    hot: {
+    carto: {
       type: "raster",
       tiles: [
-        "https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
-        "https://b.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
-        "https://c.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+        "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
       ],
       tileSize: 256,
       maxzoom: 19,
+      attribution: "© <a href='https://carto.com/'>CARTO</a> © <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a>",
     },
   },
-  layers: [{ id: "hot", type: "raster", source: "hot" }],
+  layers: [{ id: "carto", type: "raster", source: "carto" }],
 };
 
 export function useMap() {
