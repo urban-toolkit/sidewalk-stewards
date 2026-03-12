@@ -111,14 +111,11 @@ export function TileRow({
                     </div>
                   </div>
                 ))
-              : // Fallback placeholders if suggestions not loaded yet
-                Array.from({ length: 3 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="suggestionCard"
-                    style={{ minWidth: thumbSize, width: thumbSize, height: thumbSize }}
-                  />
-                ))}
+              : (
+                  <div className="mesoNoSuggestions">
+                    No suggestions for this area
+                  </div>
+                )}
           </div>
         </div>
       )}

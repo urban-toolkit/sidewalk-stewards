@@ -244,11 +244,11 @@ export default function App() {
                           size={OVERLAY_SIZE}
                         />
                       ))
-                    : Array.from({ length: 4 }).map((_, i) => (
-                        <div key={i} className="microSuggestionCard">
-                          <div className="microSuggestionSquare" />
+                    : (
+                        <div className="microNoSuggestions">
+                          No suggestions for this area
                         </div>
-                      ))}
+                      )}
                 </div>
               ) : (
                 <div className={viewLevel === "macro" ? "macroGrid" : "list"}>
