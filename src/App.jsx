@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { MapView } from "./components/Map";
 import { useMetadata } from "./hooks/useMetadata";
 import { useValidMeta } from "./hooks/useValidMeta";
@@ -6,6 +6,7 @@ import { useTiles } from "./hooks/useTiles";
 import { useTileBorders } from "./hooks/useTileBorders";
 import { useSuggestions } from "./hooks/useSuggestions";
 import { useSuggestionLayer } from "./hooks/useSuggestionLayer";
+import { useSelectedSuggestionsLayer } from "./hooks/useSelectedSuggestionsLayer";
 import { TileRow } from "./components/TileRow";
 import { ParallelCoordinateChart } from "./components/ParallelCoordinateChart";
 import { tileToLngLatBounds } from "./utils/tileUtils";
@@ -71,7 +72,7 @@ function suggestionPaths(tile, features, size) {
 
 // ── Micro suggestion card ─────────────────────────────────────────────────────
 
-function MicroCard({ tile, networkData, features, size }) {
+function MicroCard({ tile, networkData, features, size, selected, onToggle }) {
   const imgUrl = `/tiles/${tile.z}/${tile.x}/${tile.y}.jpg`;
 
   const netLines  = useMemo(() => networkPolylines(tile, networkData, size),
@@ -80,7 +81,11 @@ function MicroCard({ tile, networkData, features, size }) {
     [tile, features, size]);
 
   return (
-    <div className="microSuggestionCard">
+    <div
+      className={`microSuggestionCard ${selected ? "suggestionSelected" : ""}`}
+      onClick={onToggle}
+      style={{ cursor: "pointer" }}
+    >
       <div className="microSuggestionSquare">
         <img src={imgUrl} alt="" className="microSuggestionImg" loading="lazy" />
 
@@ -98,7 +103,7 @@ function MicroCard({ tile, networkData, features, size }) {
           </svg>
         )}
 
-        {/* Suggestion polygons */}
+        {/* Suggestion polygons — green for suggestions */}
         {polyPaths.length > 0 && (
           <svg
             viewBox={`0 0 ${size} ${size}`}
@@ -112,6 +117,15 @@ function MicroCard({ tile, networkData, features, size }) {
             ))}
           </svg>
         )}
+
+        {/* Selection checkbox */}
+        <span className={`suggestionCheckbox ${selected ? "checked" : ""}`}>
+          {selected && (
+            <svg viewBox="0 0 12 12" width="10" height="10">
+              <path d="M2.5 6l2.5 2.5 4.5-5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </span>
       </div>
     </div>
   );
@@ -140,6 +154,14 @@ export default function App() {
   const { validMeta8x8, validating } = useValidMeta(meta8x8);
   const { suggestions } = useSuggestions();
 
+  // ── Selection state ─────────────────────────────────────────────────────────
+  // Keys are "tileId:nSuggestion" strings; values are Feature[]
+  const [selectedKeys, setSelectedKeys] = useState(new Set());
+
+  // Track previous viewLevel and focusTile to reset on change
+  const prevViewLevelRef = useRef(null);
+  const prevFocusTileRef = useRef(null);
+
   return (
     <div className="page">
       <MapView meta2x2={meta2x2} sortKey={sortKey} filterIds={macroFilterIds}>
@@ -156,6 +178,59 @@ export default function App() {
               ? dominantTile(tiles, bounds)
               : null;
 
+          // ── Reset selections on viewLevel change ──
+          useEffect(() => {
+            if (prevViewLevelRef.current !== null && prevViewLevelRef.current !== viewLevel) {
+              setSelectedKeys(new Set());
+            }
+            prevViewLevelRef.current = viewLevel;
+          }, [viewLevel]);
+
+          // ── Reset selections on focusTile change (micro) ──
+          useEffect(() => {
+            const prevId = prevFocusTileRef.current;
+            const currId = focusTile?.id ?? null;
+            if (prevId !== null && prevId !== currId) {
+              setSelectedKeys(new Set());
+            }
+            prevFocusTileRef.current = currId;
+          }, [focusTile?.id]);
+
+          // ── Toggle a suggestion's selection ──
+          const toggleSuggestion = useCallback((tileId, nSuggestion) => {
+            setSelectedKeys((prev) => {
+              const key = `${tileId}:${nSuggestion}`;
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            });
+          }, []);
+
+          // ── Derive flat feature array from selected keys ──
+          const selectedFeatures = useMemo(() => {
+            if (selectedKeys.size === 0 || !suggestions) return [];
+            const features = [];
+            for (const key of selectedKeys) {
+              const [tileId, nStr] = key.split(":");
+              const n = Number(nStr);
+              const tileSugg = suggestions.get(tileId);
+              if (!tileSugg) continue;
+              const feats = tileSugg.get(n);
+              if (feats) features.push(...feats);
+            }
+            return features;
+          }, [selectedKeys, suggestions]);
+
+          // ── Console.log the selected GeoJSON ──
+          useEffect(() => {
+            const fc = {
+              type: "FeatureCollection",
+              features: selectedFeatures,
+            };
+            console.log("Selected suggestions GeoJSON:", fc);
+          }, [selectedFeatures]);
+
           useTileBorders(mapRef, tiles, focusTile);
 
           const focusTileSuggestions = focusTile
@@ -164,6 +239,9 @@ export default function App() {
 
           // n_suggestion=0 → shown as polygon overlay on the map (micro only)
           useSuggestionLayer(mapRef, focusTileSuggestions?.get(0) ?? null, viewLevel);
+
+          // ── Selected suggestions → green layer on the map ──
+          useSelectedSuggestionsLayer(mapRef, selectedFeatures, viewLevel);
 
           // n_suggestion > 0 → shown in right-panel suggestion cards
           const microSuggestions = focusTileSuggestions
@@ -248,6 +326,8 @@ export default function App() {
                           networkData={networkData}
                           features={features}
                           size={OVERLAY_SIZE}
+                          selected={selectedKeys.has(`${focusTile.id}:${n}`)}
+                          onToggle={() => toggleSuggestion(focusTile.id, n)}
                         />
                       ))
                     : (
@@ -269,6 +349,8 @@ export default function App() {
                       networkData={networkData}
                       thumbSize={thumbSize}
                       tileSuggestions={suggestions?.get(t.id) ?? null}
+                      selectedKeys={selectedKeys}
+                      onToggleSuggestion={toggleSuggestion}
                     />
                   ))}
                 </div>

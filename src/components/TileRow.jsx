@@ -6,14 +6,16 @@ import { SuggestionOverlay } from "./SuggestionOverlay";
  * TileRow displays a tile thumbnail with optional network overlay + suggestion cards.
  *
  * Props:
- *   tile            – { z, x, y, id }
- *   meta            – metadata record for the tile (or undefined)
- *   sortKey         – active metric key
- *   onClick         – click handler for the thumbnail
- *   showSuggestions – whether to render the suggestion cards (meso view)
- *   networkData     – parsed GeoJSON FeatureCollection (or null)
- *   thumbSize       – thumbnail pixel size (default 160)
- *   tileSuggestions – Map<nSuggestion, Feature[]> for this tile (or null)
+ *   tile                – { z, x, y, id }
+ *   meta                – metadata record for the tile (or undefined)
+ *   sortKey             – active metric key
+ *   onClick             – click handler for the thumbnail
+ *   showSuggestions     – whether to render the suggestion cards (meso view)
+ *   networkData         – parsed GeoJSON FeatureCollection (or null)
+ *   thumbSize           – thumbnail pixel size (default 160)
+ *   tileSuggestions     – Map<nSuggestion, Feature[]> for this tile (or null)
+ *   selectedKeys        – Set<string> of "tileId:nSuggestion" keys currently selected
+ *   onToggleSuggestion  – (tileId, nSuggestion) => void
  */
 export function TileRow({
   tile,
@@ -24,6 +26,8 @@ export function TileRow({
   networkData,
   thumbSize = 160,
   tileSuggestions = null,
+  selectedKeys = new Set(),
+  onToggleSuggestion,
 }) {
   const imgUrl = `/tiles/${tile.z}/${tile.x}/${tile.y}.jpg`;
   const [hidden, setHidden] = useState(false);
@@ -81,42 +85,56 @@ export function TileRow({
         <div className="suggestionsWrap">
           <div className="suggestionsScroller">
             {suggestionEntries.length > 0
-              ? suggestionEntries.map(([n, features]) => (
-                  <div
-                    key={n}
-                    className="suggestionCard"
-                    style={{
-                      padding: 0,
-                      overflow: "hidden",
-                      minWidth: thumbSize,
-                      width: thumbSize,
-                      height: thumbSize,
-                      borderRadius: 8,
-                      flexShrink: 0,
-                    }}
-                  >
+              ? suggestionEntries.map(([n, features]) => {
+                  const isSelected = selectedKeys.has(`${tile.id}:${n}`);
+                  return (
                     <div
-                      className="thumbContainer"
-                      style={{ width: thumbSize, height: thumbSize, borderRadius: 0 }}
+                      key={n}
+                      className={`suggestionCard ${isSelected ? "suggestionSelected" : ""}`}
+                      style={{
+                        padding: 0,
+                        overflow: "hidden",
+                        minWidth: thumbSize,
+                        width: thumbSize,
+                        height: thumbSize,
+                        borderRadius: 8,
+                        flexShrink: 0,
+                        cursor: "pointer",
+                      }}
+                      onClick={() => onToggleSuggestion?.(tile.id, n)}
                     >
-                      <img
-                        src={imgUrl}
-                        style={{ width: thumbSize, height: thumbSize, display: "block" }}
-                        loading="lazy"
-                      />
-                      {networkData && (
-                        <NetworkOverlay tile={tile} networkData={networkData} size={thumbSize} />
-                      )}
-                      <SuggestionOverlay
-                        tile={tile}
-                        features={features}
-                        size={thumbSize}
-                        fillColor="rgba(34, 197, 94, 0.22)"
-                        strokeColor="#22c55e"
-                      />
+                      <div
+                        className="thumbContainer"
+                        style={{ width: thumbSize, height: thumbSize, borderRadius: 0 }}
+                      >
+                        <img
+                          src={imgUrl}
+                          style={{ width: thumbSize, height: thumbSize, display: "block" }}
+                          loading="lazy"
+                        />
+                        {networkData && (
+                          <NetworkOverlay tile={tile} networkData={networkData} size={thumbSize} />
+                        )}
+                        <SuggestionOverlay
+                          tile={tile}
+                          features={features}
+                          size={thumbSize}
+                          fillColor="rgba(34, 197, 94, 0.22)"
+                          strokeColor="#22c55e"
+                        />
+
+                        {/* Selection checkbox */}
+                        <span className={`suggestionCheckbox ${isSelected ? "checked" : ""}`}>
+                          {isSelected && (
+                            <svg viewBox="0 0 12 12" width="10" height="10">
+                              <path d="M2.5 6l2.5 2.5 4.5-5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               : (
                   <div className="mesoNoSuggestions">
                     No suggestions for this area

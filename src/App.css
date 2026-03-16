@@ -523,3 +523,27 @@ html, body, #root {
   color: #aaa;
   white-space: nowrap;
 }
+
+/* Checkbox — top-right of each suggestion card */
+.suggestionCheckbox {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transition: background 0.15s, border-color 0.15s;
+  z-index: 5;
+}
+ 
+.suggestionCheckbox.checked {
+  background: #22c55e;
+  border-color: #22c55e;
+}
+ 
