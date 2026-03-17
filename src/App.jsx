@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { MapView } from "./components/Map";
 import { useMetadata } from "./hooks/useMetadata";
 import { useValidMeta } from "./hooks/useValidMeta";
@@ -12,11 +12,10 @@ import { ParallelCoordinateChart } from "./components/ParallelCoordinateChart";
 import { tileToLngLatBounds } from "./utils/tileUtils";
 import "./App.css";
 
-const VIEW_LABELS  = { macro: "8 × 8 Tiles",  meso: "2 × 2 Tiles", micro: "2 × 2 Tiles" };
+const VIEW_LABELS    = { macro: "8 × 8 Tiles",  meso: "2 × 2 Tiles", micro: "2 × 2 Tiles" };
 const LOADING_LABELS = { macro: "Loading 8 × 8 metadata...", meso: "Loading 2 × 2 metadata...", micro: "Loading 2 × 2 metadata..." };
-const LEVEL_BADGES = { macro: "MACRO", meso: "MESO", micro: "MICRO" };
+const LEVEL_BADGES   = { macro: "MACRO", meso: "MESO", micro: "MICRO" };
 
-// Logical coordinate space for SVG viewBox — does not affect rendered pixel size
 const OVERLAY_SIZE = 256;
 
 // ── Geo → SVG point helpers ───────────────────────────────────────────────────
@@ -89,13 +88,8 @@ function MicroCard({ tile, networkData, features, size, selected, onToggle }) {
       <div className="microSuggestionSquare">
         <img src={imgUrl} alt="" className="microSuggestionImg" loading="lazy" />
 
-        {/* Network lines */}
         {netLines.length > 0 && (
-          <svg
-            viewBox={`0 0 ${size} ${size}`}
-            preserveAspectRatio="none"
-            className="microSuggestionSvg"
-          >
+          <svg viewBox={`0 0 ${size} ${size}`} preserveAspectRatio="none" className="microSuggestionSvg">
             {netLines.map((pts, i) => (
               <polyline key={i} points={pts} fill="none"
                 stroke="#e85d04" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
@@ -103,13 +97,8 @@ function MicroCard({ tile, networkData, features, size, selected, onToggle }) {
           </svg>
         )}
 
-        {/* Suggestion polygons — green for suggestions */}
         {polyPaths.length > 0 && (
-          <svg
-            viewBox={`0 0 ${size} ${size}`}
-            preserveAspectRatio="none"
-            className="microSuggestionSvg"
-          >
+          <svg viewBox={`0 0 ${size} ${size}`} preserveAspectRatio="none" className="microSuggestionSvg">
             {polyPaths.map((d, i) => (
               <path key={i} d={d}
                 fill="rgba(34,197,94,0.22)" stroke="#22c55e"
@@ -118,7 +107,6 @@ function MicroCard({ tile, networkData, features, size, selected, onToggle }) {
           </svg>
         )}
 
-        {/* Selection checkbox */}
         <span className={`suggestionCheckbox ${selected ? "checked" : ""}`}>
           {selected && (
             <svg viewBox="0 0 12 12" width="10" height="10">
@@ -154,16 +142,109 @@ export default function App() {
   const { validMeta8x8, validating } = useValidMeta(meta8x8);
   const { suggestions } = useSuggestions();
 
-  // ── Selection state ─────────────────────────────────────────────────────────
-  // Keys are "tileId:nSuggestion" strings; values are Feature[]
+  // ── Selection state ──────────────────────────────────────────────────────────
   const [selectedKeys, setSelectedKeys] = useState(new Set());
 
-  // Track previous viewLevel and focusTile to reset on change
-  const prevViewLevelRef = useRef(null);
-  const prevFocusTileRef = useRef(null);
+  const selectedFeatures = useMemo(() => {
+    if (selectedKeys.size === 0 || !suggestions) return [];
+    const features = [];
+    for (const key of selectedKeys) {
+      const [tileId, nStr] = key.split(":");
+      const n = Number(nStr);
+      const tileSugg = suggestions.get(tileId);
+      if (!tileSugg) continue;
+      const feats = tileSugg.get(n);
+      if (feats) features.push(...feats);
+    }
+    return features;
+  }, [selectedKeys, suggestions]);
+
+  // ── Training state ───────────────────────────────────────────────────────────
+  // phase: "idle" | "confirming" | "training" | "done" | "error"
+  const [trainingPhase,    setTrainingPhase]    = useState("idle");
+  const [trainingJobId,    setTrainingJobId]    = useState(null);
+  const [trainingMessage,  setTrainingMessage]  = useState("");
+  const [trainingProgress, setTrainingProgress] = useState({ epoch: 0, total: 200 });
+
+  const handleTrainClick = useCallback(() => setTrainingPhase("confirming"), []);
+
+  const handleTrainCancel = useCallback(() => setTrainingPhase("idle"), []);
+
+  const handleTrainDismiss = useCallback(() => {
+    setTrainingPhase("idle");
+    setTrainingJobId(null);
+    setTrainingMessage("");
+    setTrainingProgress({ epoch: 0, total: 200 });
+  }, []);
+
+  const handleTrainConfirm = useCallback(async () => {
+    setTrainingPhase("training");
+    setTrainingProgress({ epoch: 0, total: 200 });
+    const fc = { type: "FeatureCollection", features: selectedFeatures };
+    try {
+      const res = await fetch("/api/train", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(fc),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { job_id } = await res.json();
+      setTrainingJobId(job_id);
+      setSelectedKeys(new Set());
+    } catch (err) {
+      setTrainingPhase("error");
+      setTrainingMessage(err.message);
+    }
+  }, [selectedFeatures]);
+
+  // ── Poll training status every 3 s ──────────────────────────────────────────
+  useEffect(() => {
+    if (trainingPhase !== "training" || !trainingJobId) return;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/train/status/${trainingJobId}`);
+        if (!res.ok) return;
+        const { status, message, epoch, total_epochs } = await res.json();
+        if (epoch !== undefined) {
+          setTrainingProgress({ epoch, total: total_epochs ?? 200 });
+        }
+        if (status === "done") {
+          clearInterval(id);
+          setTrainingPhase("done");
+          setTrainingMessage(message ?? "");
+        } else if (status === "error") {
+          clearInterval(id);
+          setTrainingPhase("error");
+          setTrainingMessage(message ?? "Unknown error.");
+        }
+      } catch { /* transient — keep polling */ }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [trainingPhase, trainingJobId]);
 
   return (
     <div className="page">
+
+      {/* ── Confirmation modal ── */}
+      {trainingPhase === "confirming" && (
+        <div className="confirmOverlay">
+          <div className="confirmCard">
+            <div className="confirmTitle">Submit for training?</div>
+            <div className="confirmBody">
+              {selectedKeys.size} suggestion{selectedKeys.size !== 1 ? "s" : ""} across{" "}
+              {new Set([...selectedKeys].map((k) => k.split(":")[0])).size} tile
+              {new Set([...selectedKeys].map((k) => k.split(":")[0])).size !== 1 ? "s" : ""} will
+              be used to fine-tune the model. Training runs in the background and takes several
+              minutes. Selections will be cleared after submission.
+            </div>
+            <div className="confirmActions">
+              <button className="confirmCancelBtn" onClick={handleTrainCancel}>Cancel</button>
+              <button className="confirmSubmitBtn" onClick={handleTrainConfirm}>Submit</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <MapView meta2x2={meta2x2} sortKey={sortKey} filterIds={macroFilterIds}>
         {({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef }) => {
           const { tiles, viewportTileIds, activeMeta, activeMetaById, viewLevel } = useTiles({
@@ -178,25 +259,6 @@ export default function App() {
               ? dominantTile(tiles, bounds)
               : null;
 
-          // ── Reset selections on viewLevel change ──
-          useEffect(() => {
-            if (prevViewLevelRef.current !== null && prevViewLevelRef.current !== viewLevel) {
-              setSelectedKeys(new Set());
-            }
-            prevViewLevelRef.current = viewLevel;
-          }, [viewLevel]);
-
-          // ── Reset selections on focusTile change (micro) ──
-          useEffect(() => {
-            const prevId = prevFocusTileRef.current;
-            const currId = focusTile?.id ?? null;
-            if (prevId !== null && prevId !== currId) {
-              setSelectedKeys(new Set());
-            }
-            prevFocusTileRef.current = currId;
-          }, [focusTile?.id]);
-
-          // ── Toggle a suggestion's selection ──
           const toggleSuggestion = useCallback((tileId, nSuggestion) => {
             setSelectedKeys((prev) => {
               const key = `${tileId}:${nSuggestion}`;
@@ -207,43 +269,15 @@ export default function App() {
             });
           }, []);
 
-          // ── Derive flat feature array from selected keys ──
-          const selectedFeatures = useMemo(() => {
-            if (selectedKeys.size === 0 || !suggestions) return [];
-            const features = [];
-            for (const key of selectedKeys) {
-              const [tileId, nStr] = key.split(":");
-              const n = Number(nStr);
-              const tileSugg = suggestions.get(tileId);
-              if (!tileSugg) continue;
-              const feats = tileSugg.get(n);
-              if (feats) features.push(...feats);
-            }
-            return features;
-          }, [selectedKeys, suggestions]);
-
-          // ── Console.log the selected GeoJSON ──
-          useEffect(() => {
-            const fc = {
-              type: "FeatureCollection",
-              features: selectedFeatures,
-            };
-            console.log("Selected suggestions GeoJSON:", fc);
-          }, [selectedFeatures]);
-
           useTileBorders(mapRef, tiles, focusTile);
 
           const focusTileSuggestions = focusTile
             ? (suggestions?.get(focusTile.id) ?? null)
             : null;
 
-          // n_suggestion=0 → shown as polygon overlay on the map (micro only)
           useSuggestionLayer(mapRef, focusTileSuggestions?.get(0) ?? null, viewLevel);
-
-          // ── Selected suggestions → green layer on the map ──
           useSelectedSuggestionsLayer(mapRef, selectedFeatures, viewLevel);
 
-          // n_suggestion > 0 → shown in right-panel suggestion cards
           const microSuggestions = focusTileSuggestions
             ? [...focusTileSuggestions.entries()]
                 .filter(([n]) => n > 0)
@@ -258,7 +292,7 @@ export default function App() {
                 })
               : tiles;
           const showSuggestions = viewLevel === "meso";
-          const thumbSize     = viewLevel === "macro" ? 220 : 160;
+          const thumbSize = viewLevel === "macro" ? 220 : 160;
 
           const getClickHandler = (tile) => {
             switch (viewLevel) {
@@ -268,6 +302,10 @@ export default function App() {
               default:      return undefined;
             }
           };
+
+          const pct = trainingProgress.total > 0
+            ? Math.round((trainingProgress.epoch / trainingProgress.total) * 100)
+            : 0;
 
           return (
             <div className={`rightPane ${viewLevel}`}>
@@ -296,6 +334,41 @@ export default function App() {
                       ? `${tiles.length} of ${meta8x8?.length ?? "?"} tiles`
                       : `${tiles.length} tiles`}
                   </div>
+
+                  {/* Train button */}
+                  {trainingPhase === "idle" && selectedKeys.size > 0 && (
+                    <button className="trainBtn" onClick={handleTrainClick}>
+                      Train model · {selectedKeys.size}
+                    </button>
+                  )}
+
+                  {/* Training status pill */}
+                  {trainingPhase !== "idle" && trainingPhase !== "confirming" && (
+                    <div className={`trainingStatus ${trainingPhase}`}>
+                      {trainingPhase === "training" && (
+                        <>
+                          <span className="trainingStatusSpinner" />
+                          <span>Training…</span>
+                          <div className="trainingProgressBar">
+                            <div className="trainingProgressFill" style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="trainingProgressPct">{pct}%</span>
+                        </>
+                      )}
+                      {trainingPhase === "done" && (
+                        <>
+                          Model trained
+                          <button className="trainingStatusDismiss" onClick={handleTrainDismiss}>✕</button>
+                        </>
+                      )}
+                      {trainingPhase === "error" && (
+                        <>
+                          Training failed
+                          <button className="trainingStatusDismiss" onClick={handleTrainDismiss}>✕</button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -316,7 +389,6 @@ export default function App() {
 
               {/* ── Content ── */}
               {viewLevel === "micro" && focusTile ? (
-                /* 2-col scrollable grid — 4 visible at a time, more on scroll */
                 <div className="microSuggestionsList">
                   {microSuggestions.length > 0
                     ? microSuggestions.map(([n, features]) => (

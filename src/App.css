@@ -547,3 +547,154 @@ html, body, #root {
   border-color: #22c55e;
 }
  
+/* ─── Train model button ──────────────────────────────────────────────────── */
+
+.trainBtn {
+  padding: 5px 11px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #333;
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s;
+  user-select: none;
+}
+
+.trainBtn:hover { background: #555; }
+
+/* ─── Training status pill ────────────────────────────────────────────────── */
+
+.trainingStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #555;
+  white-space: nowrap;
+}
+
+.trainingStatus.done  { color: #333; }
+.trainingStatus.error { color: #999; }
+
+.trainingStatusSpinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid #ddd;
+  border-top-color: #555;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.trainingStatusDismiss {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: #bbb;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.trainingStatusDismiss:hover { color: #888; }
+
+/* ─── Confirmation modal ──────────────────────────────────────────────────── */
+
+.confirmOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirmCard {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 28px 32px;
+  max-width: 380px;
+  width: calc(100% - 48px);
+  box-shadow: 0 4px 28px rgba(0, 0, 0, 0.08);
+}
+
+.confirmTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 10px;
+}
+
+.confirmBody {
+  font-size: 13px;
+  color: #777;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+.confirmActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.confirmCancelBtn {
+  padding: 7px 16px;
+  border: 1px solid #e0e0e0;
+  border-radius: 7px;
+  background: white;
+  font-size: 13px;
+  color: #999;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.confirmCancelBtn:hover { background: #f7f7f7; }
+
+.confirmSubmitBtn {
+  padding: 7px 16px;
+  border: 1px solid #333;
+  border-radius: 7px;
+  background: #333;
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.confirmSubmitBtn:hover { background: #555; }
+
+/* ─── Training progress bar ──────────────────────────────────────────────── */
+
+.trainingProgressBar {
+  width: 80px;
+  height: 4px;
+  background: #e0e0e0;
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.trainingProgressFill {
+  height: 100%;
+  background: #333;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.trainingProgressPct {
+  font-size: 11px;
+  color: #555;
+  min-width: 28px;
+}

@@ -53,20 +53,22 @@ export function MapView({ meta2x2, sortKey, filterIds = null, children }) {
         )}
 
         {/* Heatmap toggle */}
-        <div className="mapOverlayControl">
-          <label className="toggleLabel">
-            <span className="toggleText">Heatmap</span>
-            <span
-              className={`toggleTrack ${heatmapOn ? "on" : ""}`}
-              onClick={() => setHeatmapOn((v) => !v)}
-            >
-              <span className="toggleThumb" />
-            </span>
-          </label>
-        </div>
+        {mapZoom < 16 && (
+          <div className="mapOverlayControl">
+            <label className="toggleLabel">
+              <span className="toggleText">Heatmap</span>
+              <span
+                className={`toggleTrack ${heatmapOn ? "on" : ""}`}
+                onClick={() => setHeatmapOn((v) => !v)}
+              >
+                <span className="toggleThumb" />
+              </span>
+            </label>
+          </div>
+        )}
 
         {/* Colour scale legend */}
-        {heatmapOn && (
+        {heatmapOn && mapZoom < 16 && (
           <div className="mapLegend">
             <div className="legendTitle">{sortKey}</div>
             <div className="legendBar" />

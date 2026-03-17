@@ -45,6 +45,10 @@ export default defineConfig({
         target: "http://localhost:8000",
         changeOrigin: true,
       },
+      "/api/train": {
+        target: "http://localhost:8001",
+        changeOrigin: true,
+      },
     },
   },
 });
