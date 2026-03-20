@@ -1,16 +1,18 @@
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+# ── Load .env from project root (two levels up from backend/) ─────────────────
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 app = FastAPI()
 
@@ -21,16 +23,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
+# ── Paths from .env ────────────────────────────────────────────────────────────
 
-BASE = Path(r"C:\Users\leo_v\Documents\leovsferreira\code\tile2net\dorchester_exports")
-
-SCRIPT_PATH    = BASE / "stewards_scripts" / "train_from_suggestions.py"
-TILES_DIR      = BASE / "tiles"
-T2N_DIR        = BASE / "masks_tile2net_polygons"
-CONF_DIR       = BASE / "masks_confidence"
-OUTPUT_GEOJSON = BASE / "outputs" / "polygons.geojson"
-MODEL_OUTPUT   = BASE / "outputs" / "suggestion_model.pt"
+SCRIPT_PATH  = Path(os.environ["SCRIPT_PATH"]) / "train_from_suggestions.py"
+TILES_DIR    = Path(os.environ["TILES_DIR"])
+T2N_DIR      = Path(os.environ["T2N_DIR"])
+CONF_DIR     = Path(os.environ["CONF_DIR"])
+MODEL_OUTPUT = Path(os.environ["TRANED_MODEL_OUTPUT"]) / "suggestion_model.pt"
 
 # ── In-memory job store ────────────────────────────────────────────────────────
 # Each job: { status, message, epoch, total_epochs }
@@ -38,42 +37,29 @@ MODEL_OUTPUT   = BASE / "outputs" / "suggestion_model.pt"
 jobs: dict[str, dict] = {}
 
 
-def _make_remapped_dir(source_dir: Path, suffix: str, tmp_parent: str) -> str:
-    tmp = tempfile.mkdtemp(dir=tmp_parent)
-    for src in source_dir.glob(f"*{suffix}.png"):
-        tid = src.stem.replace(suffix, "")
-        dst = Path(tmp) / f"{tid}.png"
-        try:
-            os.link(src, dst)
-        except OSError:
-            shutil.copy2(src, dst)
-    return tmp
-
-
-def _run_training(job_id: str, geojson_path: str) -> None:
-    tmp_root = tempfile.mkdtemp(prefix="stewards_remap_")
+def _run_training(job_id: str, geojson_data: dict) -> None:
     try:
-        t2n_remapped  = _make_remapped_dir(T2N_DIR,  "_predictions", tmp_root)
-        conf_remapped = _make_remapped_dir(CONF_DIR, "_prob_mask",   tmp_root)
-
         proc = subprocess.Popen(
-        [
-            sys.executable, "-u",
-            str(SCRIPT_PATH),
-            "--geojson",      geojson_path,
-            "--tiles_dir",    str(TILES_DIR),
-            "--t2n_dir",      t2n_remapped,
-            "--conf_dir",     conf_remapped,
-            "--output",       str(OUTPUT_GEOJSON),
-            "--model_output", str(MODEL_OUTPUT),
-            "--epochs",       "200",
-            "--head",         "fix",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},  # ← also set env var
-    )
+            [
+                sys.executable, "-u",
+                str(SCRIPT_PATH),
+                "--tiles_dir",    str(TILES_DIR),
+                "--t2n_dir",      str(T2N_DIR),
+                "--conf_dir",     str(CONF_DIR),
+                "--model_output", str(MODEL_OUTPUT),
+                "--epochs",       "200",
+                "--head",         "fix",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},
+        )
+
+        # Send GeoJSON via stdin, then close so the script sees EOF
+        proc.stdin.write(json.dumps(geojson_data))
+        proc.stdin.close()
 
         # ── Parse epoch progress from stdout in real time ──
         stdout_lines = []
@@ -83,8 +69,8 @@ def _run_training(job_id: str, geojson_path: str) -> None:
             stdout_lines.append(line)
             m = epoch_re.search(line)
             if m:
-                epoch      = int(m.group(1))
-                total      = int(m.group(2))
+                epoch = int(m.group(1))
+                total = int(m.group(2))
                 jobs[job_id]["epoch"]        = epoch
                 jobs[job_id]["total_epochs"] = total
 
@@ -108,15 +94,6 @@ def _run_training(job_id: str, geojson_path: str) -> None:
     except Exception as exc:
         print(f"\n[TRAINING EXCEPTION — job {job_id}]\n{exc}\n")
         jobs[job_id].update({"status": "error", "message": str(exc)})
-    finally:
-        try:
-            Path(geojson_path).unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
-            shutil.rmtree(tmp_root, ignore_errors=True)
-        except Exception:
-            pass
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -131,13 +108,7 @@ async def start_training(body: dict) -> dict:
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "running", "message": "", "epoch": 0, "total_epochs": 200}
 
-    tmp = tempfile.NamedTemporaryFile(
-        suffix=".geojson", delete=False, mode="w", encoding="utf-8"
-    )
-    json.dump(body, tmp)
-    tmp.close()
-
-    threading.Thread(target=_run_training, args=(job_id, tmp.name), daemon=True).start()
+    threading.Thread(target=_run_training, args=(job_id, body), daemon=True).start()
 
     return {"job_id": job_id}
 

@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 
 .env
+backend/stewards_files/map_tiles
+backend/stewards_files/boston/tiles
+backend/stewards_files/boston/masks_confidence
+backend/stewards_files/boston/masks_groundtruth_polygons
+backend/stewards_files/boston/masks_tile2net_polygons
+backend/stewards_files/boston/outputs
