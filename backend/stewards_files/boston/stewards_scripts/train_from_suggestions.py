@@ -10,22 +10,37 @@ from dotenv import load_dotenv
 # .env is 4 levels up: stewards_scripts → boston → stewards_files → backend → project root
 load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
 
+import cv2
 import geopandas as gpd
 import numpy as np
 import torch
 from PIL import Image
+from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
+from shapely.validation import make_valid
 from tqdm import tqdm
 
 # Local imports — use HELPERS_PATH from env if set, otherwise fall back to sibling dir
 _helpers = os.getenv("HELPERS_PATH") or str(Path(__file__).parent / "helper_scripts")
 sys.path.insert(0, _helpers)
-from polygon_fixing import rasterize_polygons_to_mask
+from polygon_fixing import get_tile_bounds, rasterize_polygons_to_mask
 from tile2net_training_utils import ResidualFixNet, train_model
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+def deg2num(lon, lat, zoom):
+    """Convert lon/lat to slippy-map tile x/y at a given zoom level."""
+    n = 2 ** zoom
+    xtile = int((lon + 180.0) / 360.0 * n)
+    lat_rad = math.radians(lat)
+    ytile = int(
+        (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi)
+        / 2.0
+        * n
+    )
+    return xtile, ytile
 
 def find_covered_tile_ids(gdf, tiles_dir, t2n_dir, conf_dir):
     """Derive zoom-20 tile IDs from the tile_id property (zoom-19 parents) in the GeoJSON.
@@ -75,6 +90,198 @@ def rasterize_suggestions_to_gt(gdf, tile_ids, gt_dir):
         x, y = map(int, tid.split("_"))
         mask = rasterize_polygons_to_mask(gdf, x, y, zoom=20, resolution=256)
         Image.fromarray(mask, mode="L").save(gt_dir / f"{tid}.png")
+
+def run_inference(model, tile_ids, device, head, tiles_dir, t2n_dir, conf_dir):
+    """Run trained model on tiles and return predicted masks.
+
+    Based on the inference loop in tile2net_polygon_fixing.ipynb.
+
+    Parameters
+    ----------
+    model : ResidualFixNet
+        Trained model in eval mode.
+    tile_ids : list of str
+    device : torch.device
+    head : str
+        "fix" or "full".
+    tiles_dir, t2n_dir, conf_dir : str or Path
+        Directories for RGB, T2N masks, confidence masks.
+
+    Returns
+    -------
+    dict : tile_id → uint8 mask (256x256), 0 or 255.
+    """
+    tiles_dir = Path(tiles_dir)
+    t2n_dir = Path(t2n_dir)
+    conf_dir = Path(conf_dir)
+
+    model.eval()
+    predictions = {}
+
+    for tid in tqdm(tile_ids, desc="Running inference"):
+        # Load RGB
+        sat = np.array(Image.open(tiles_dir / f"{tid}.jpg").convert("RGB"))
+        rgb = sat.astype(np.float32) / 255.0
+
+        # Load confidence
+        conf_path = conf_dir / f"{tid}.png"
+        if not conf_path.exists():
+            continue
+        conf_ch = np.array(Image.open(conf_path).convert("L")).astype(np.float32) / 255.0
+
+        # Load T2N polygon mask
+        poly_mask_path = t2n_dir / f"{tid}.png"
+        if not poly_mask_path.exists():
+            continue
+        poly_mask = np.array(Image.open(poly_mask_path).convert("L"))
+        t2n_ch = (poly_mask > 127).astype(np.float32)
+
+        # Build 5-channel input: (1, 5, 256, 256)
+        input_np = np.concatenate([
+            rgb,
+            t2n_ch[:, :, None],
+            conf_ch[:, :, None],
+        ], axis=2).transpose(2, 0, 1)
+
+        input_tensor = torch.from_numpy(input_np).unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            outputs = model(input_tensor)
+            if len(outputs) == 3:
+                pred_full, pred_fix, pred_remove = outputs
+            else:
+                pred_full, pred_fix = outputs
+                pred_remove = None
+
+        if head == "fix":
+            pred_np = pred_fix[0, 0].cpu().numpy()
+            t2n_binary = t2n_ch > 0.5
+            if pred_remove is not None:
+                pred_remove_np = pred_remove[0, 0].cpu().numpy()
+                corrected = ((t2n_binary & ~(pred_remove_np > 0.5)) | (pred_np > 0.5)).astype(np.uint8) * 255
+            else:
+                corrected = (t2n_binary | (pred_np > 0.5)).astype(np.uint8) * 255
+        else:
+            pred_np = pred_full[0, 0].cpu().numpy()
+            corrected = (pred_np > 0.5).astype(np.uint8) * 255
+
+        predictions[tid] = corrected
+
+    return predictions
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Re-polygonization (from tile2net_polygon_fixing.ipynb)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_polygons(geom):
+    """Extract Polygon(s) from any Shapely geometry."""
+    if geom is None or geom.is_empty:
+        return []
+    if isinstance(geom, Polygon):
+        return [geom]
+    if isinstance(geom, (MultiPolygon, GeometryCollection)):
+        polys = []
+        for part in geom.geoms:
+            polys.extend(_extract_polygons(part))
+        return polys
+    return []
+
+def mask_to_polygons(mask, xtile, ytile, zoom=19, resolution=256,
+                     simplify_tolerance=0.5, min_area_px=25,
+                     morph_kernel=3):
+    """Convert a binary mask (256x256) back to geo-referenced polygons.
+
+    Parameters
+    ----------
+    mask : ndarray (256, 256) uint8, 0/255
+    xtile, ytile : int — tile coordinates
+    zoom : int
+    resolution : int
+    simplify_tolerance : float — Douglas-Peucker tolerance in pixels
+    min_area_px : int — drop polygons smaller than this
+    morph_kernel : int — morphological closing kernel size (0 to skip)
+
+    Returns
+    -------
+    list of shapely Polygon in EPSG:4326
+    """
+    binary = (mask > 127).astype(np.uint8)
+
+    if morph_kernel > 0:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (morph_kernel, morph_kernel)
+        )
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    west, south, east, north = get_tile_bounds(xtile, ytile, zoom)
+    px_to_lon = (east - west) / resolution
+    px_to_lat = (south - north) / resolution  # negative: y down in pixels
+
+    polygons = []
+    for contour in contours:
+        if len(contour) < 3:
+            continue
+        area = cv2.contourArea(contour)
+        if area < min_area_px:
+            continue
+
+        coords = contour.squeeze(1).astype(float)
+        geo_coords = [
+            (west + x * px_to_lon, north + y * px_to_lat) for x, y in coords
+        ]
+
+        try:
+            poly = Polygon(geo_coords)
+            if not poly.is_valid:
+                poly = make_valid(poly)
+            valid_polys = _extract_polygons(poly)
+            for vp in valid_polys:
+                if simplify_tolerance > 0:
+                    geo_tol = simplify_tolerance * abs(px_to_lon)
+                    vp = vp.simplify(geo_tol)
+                if not vp.is_empty and vp.area > 0:
+                    polygons.append(vp)
+        except Exception:
+            continue
+
+    return polygons
+
+def polygonize_predictions(predictions):
+    """Convert predicted masks to a GeoDataFrame with zoom-18 tile_id.
+
+    Parameters
+    ----------
+    predictions : dict
+        tile_id (zoom-19) → uint8 mask (256x256).
+
+    Returns
+    -------
+    GeoDataFrame with columns: geometry, tile_id (zoom-18).
+    """
+    all_polys = []
+    all_tile_ids = []
+
+    for tid, mask in tqdm(predictions.items(), desc="Re-polygonizing"):
+        if mask.max() == 0:
+            continue
+        xtile, ytile = map(int, tid.split("_"))
+        polys = mask_to_polygons(mask, xtile, ytile)
+        # Zoom-18 parent tile
+        tile_id_18 = f"{xtile // 2}_{ytile // 2}"
+        for p in polys:
+            all_polys.append(p)
+            all_tile_ids.append(tile_id_18)
+
+    if not all_polys:
+        return gpd.GeoDataFrame(columns=["tile_id", "geometry"], crs="EPSG:4326")
+
+    return gpd.GeoDataFrame(
+        {"tile_id": all_tile_ids},
+        geometry=all_polys,
+        crs="EPSG:4326",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

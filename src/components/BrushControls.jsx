@@ -1,25 +1,19 @@
-// BrushControls — floats over the map at meso/micro zoom.
-// Activation is now via the Shift key (hold to brush, release to pan normally).
-// The toggle button has been removed; this component only shows:
-//   • A "Hold ⇧" hint when nothing is selected and brush is idle
-//   • A subtle "Selecting…" pill when Shift is held
-//   • Clear and Run-model buttons whenever tiles are selected
-
 export function BrushControls({
   brushActive,
   selectedCount,
   clearAll,
   runModel,
   inferencePhase,
+  inferenceMessage,
   dismissInference,
 }) {
   return (
     <div style={{
-      display:        "flex",
-      flexDirection:  "column",
-      alignItems:     "flex-start",
-      gap:            8,
-      pointerEvents:  "none",   // wrapper transparent; buttons below opt in
+      display:       "flex",
+      flexDirection: "column",
+      alignItems:    "flex-start",
+      gap:           8,
+      pointerEvents: "none",
     }}>
 
       {/* ── Active indicator — only while Shift is held ── */}
@@ -83,7 +77,7 @@ export function BrushControls({
         </button>
       )}
 
-      {/* ── Run model — visible whenever tiles are selected and idle ── */}
+      {/* ── Apply model — visible when tiles are selected and idle ── */}
       {selectedCount > 0 && inferencePhase === "idle" && (
         <button
           onClick={runModel}
@@ -93,11 +87,11 @@ export function BrushControls({
             fontWeight:    600,
             padding:       "5px 12px",
             borderRadius:  6,
-            border:        "none",
-            background:    "#333",
-            color:         "#fff",
+            border:        "1px solid #ccc",
+            background:    "#fff",
+            color:         "#333",
             cursor:        "pointer",
-            boxShadow:     "0 1px 4px rgba(0,0,0,0.15)",
+            boxShadow:     "0 1px 4px rgba(0,0,0,0.10)",
             whiteSpace:    "nowrap",
           }}
         >
@@ -105,24 +99,62 @@ export function BrushControls({
         </button>
       )}
 
-      {/* ── Running status ── */}
+      {/* ── Running — indeterminate progress bar + live stdout message ── */}
       {inferencePhase === "running" && (
         <div style={{
           pointerEvents: "none",
           display:       "flex",
-          alignItems:    "center",
+          flexDirection: "column",
           gap:           6,
           fontSize:      11,
           color:         "#555",
           background:    "#fff",
           border:        "1px solid #ddd",
           borderRadius:  6,
-          padding:       "5px 10px",
+          padding:       "8px 10px",
           boxShadow:     "0 1px 3px rgba(0,0,0,0.08)",
-          whiteSpace:    "nowrap",
+          minWidth:      170,
+          maxWidth:      230,
         }}>
-          <Spinner />
-          Running…
+          {/* Spinner + label */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Spinner />
+            <span>Running…</span>
+          </div>
+
+          {/* Indeterminate progress bar */}
+          <div style={{
+            height:       3,
+            background:   "#f0f0f0",
+            borderRadius: 2,
+            overflow:     "hidden",
+            position:     "relative",
+          }}>
+            <div style={{
+              position:     "absolute",
+              top:          0,
+              left:         0,
+              width:        "35%",
+              height:       "100%",
+              background:   "#333",
+              borderRadius: 2,
+              animation:    "inferenceSlide 1.4s ease-in-out infinite",
+            }} />
+          </div>
+
+          {/* Latest stdout line from backend */}
+          {inferenceMessage && (
+            <div style={{
+              fontSize:     10,
+              color:        "#aaa",
+              overflow:     "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace:   "nowrap",
+              maxWidth:     210,
+            }}>
+              {inferenceMessage}
+            </div>
+          )}
         </div>
       )}
 
@@ -189,14 +221,14 @@ function CrosshairIcon({ size }) {
 function Spinner() {
   return (
     <span style={{
-      display:     "inline-block",
-      width:       10,
-      height:      10,
-      border:      "1.5px solid #ddd",
-      borderTop:   "1.5px solid #555",
-      borderRadius:"50%",
-      animation:   "spin 0.8s linear infinite",
-      flexShrink:  0,
+      display:      "inline-block",
+      width:        10,
+      height:       10,
+      border:       "1.5px solid #ddd",
+      borderTop:    "1.5px solid #555",
+      borderRadius: "50%",
+      animation:    "spin 0.8s linear infinite",
+      flexShrink:   0,
     }} />
   );
 }
@@ -204,13 +236,13 @@ function Spinner() {
 function DismissBtn({ onClick }) {
   return (
     <button onClick={onClick} style={{
-      background:  "none",
-      border:      "none",
-      fontSize:    11,
-      color:       "#bbb",
-      cursor:      "pointer",
-      padding:     "0 2px",
-      lineHeight:  1,
+      background: "none",
+      border:     "none",
+      fontSize:   11,
+      color:      "#bbb",
+      cursor:     "pointer",
+      padding:    "0 2px",
+      lineHeight: 1,
     }}>✕</button>
   );
 }

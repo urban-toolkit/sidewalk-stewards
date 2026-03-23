@@ -129,10 +129,13 @@ OUTPUT_NETWORK     = Path(os.environ["OUTPUT_NETWORK"])
 inference_jobs: dict[str, dict] = {}
 
 def _run_inference(job_id: str, tile_ids: list[str]) -> None:
+    print(f"\n[INFERENCE START — job {job_id}]")
+    print(f"  Tile count : {len(tile_ids)}")
+    print(f"  Tile IDs   : {', '.join(tile_ids[:6])}{'…' if len(tile_ids) > 6 else ''}")
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             [
-                sys.executable, str(APPLY_MODEL_SCRIPT),
+                sys.executable, "-u", str(APPLY_MODEL_SCRIPT),
                 "--tile_ids",          *tile_ids,
                 "--model_path",        str(MODEL_OUTPUT),
                 "--tiles_dir",         str(TILES_DIR),
@@ -144,14 +147,33 @@ def _run_inference(job_id: str, tile_ids: list[str]) -> None:
                 "--output_network",    str(OUTPUT_NETWORK),
                 "--head", "fix",
             ],
-            capture_output=True, text=True,
-            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            text=True,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},
         )
-        if result.returncode == 0:
+ 
+        # Stream stdout line-by-line terminal + live job status
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                print(f"  [inference] {line}")
+                inference_jobs[job_id]["message"] = line
+ 
+        proc.wait()
+        stderr = proc.stderr.read()
+ 
+        if proc.returncode == 0:
+            print(f"[INFERENCE DONE — job {job_id}]\n")
             inference_jobs[job_id] = {"status": "done", "message": ""}
         else:
-            inference_jobs[job_id] = {"status": "error", "message": result.stderr[-500:]}
+            stderr_tail = stderr[-800:] if stderr else ""
+            print(f"\n[INFERENCE ERROR — job {job_id}]\nSTDERR:\n{stderr_tail}\n")
+            inference_jobs[job_id] = {"status": "error", "message": stderr_tail or "Unknown error."}
+ 
     except Exception as exc:
+        print(f"\n[INFERENCE EXCEPTION — job {job_id}]\n{exc}\n")
         inference_jobs[job_id] = {"status": "error", "message": str(exc)}
 
 @app.post("/api/apply-model")

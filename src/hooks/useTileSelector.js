@@ -20,7 +20,6 @@ function buildGeoJSON(tileIds) {
 export function useTileSelector() {
   const [brushActive,   setBrushActive]   = useState(false);
   const [selectedTiles, setSelectedTiles] = useState(new Set());
-  // Tiles currently under the drag rectangle (live preview, not yet committed)
   const [previewTiles,  setPreviewTiles]  = useState(new Set());
 
   const [inferencePhase,   setInferencePhase]   = useState("idle");
@@ -28,20 +27,14 @@ export function useTileSelector() {
   const [inferenceMessage, setInferenceMessage] = useState("");
 
   // Drag refs — no re-render during mousemove
-  const dragStart  = useRef(null); // { lngLat, point }
+  const dragStart  = useRef(null);
   const isDragging = useRef(false);
 
   // ── Drive brushActive from Shift key ──────────────────────────────────────
   useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.key === "Shift" && !e.repeat) setBrushActive(true);
-    };
-    const onKeyUp = (e) => {
-      if (e.key === "Shift") setBrushActive(false);
-    };
-    // Safety: release if window loses focus while Shift is held
-    const onBlur = () => setBrushActive(false);
-
+    const onKeyDown = (e) => { if (e.key === "Shift" && !e.repeat) setBrushActive(true); };
+    const onKeyUp   = (e) => { if (e.key === "Shift") setBrushActive(false); };
+    const onBlur    = ()  => setBrushActive(false);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup",   onKeyUp);
     window.addEventListener("blur",    onBlur);
@@ -51,6 +44,42 @@ export function useTileSelector() {
       window.removeEventListener("blur",    onBlur);
     };
   }, []);
+
+  // ── Poll inference status every 2 s ───────────────────────────────────────
+  useEffect(() => {
+    if (inferencePhase !== "running" || !inferenceJobId) return;
+
+    console.log(`[inference] job started: ${inferenceJobId}`);
+
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/apply-model/status/${inferenceJobId}`);
+        if (!res.ok) {
+          console.warn(`[inference] poll returned HTTP ${res.status}`);
+          return;
+        }
+        const { status, message } = await res.json();
+        console.log(`[inference] status=${status}${message ? ` | ${message}` : ""}`);
+
+        if (message) setInferenceMessage(message);
+
+        if (status === "done") {
+          clearInterval(id);
+          console.log("[inference] done ✓");
+          setInferencePhase("done");
+        } else if (status === "error") {
+          clearInterval(id);
+          console.error("[inference] error:", message);
+          setInferencePhase("error");
+          setInferenceMessage(message ?? "Unknown error.");
+        }
+      } catch (err) {
+        console.warn("[inference] poll failed:", err);
+      }
+    }, 2000);
+
+    return () => clearInterval(id);
+  }, [inferencePhase, inferenceJobId]);
 
   const toggleTile = useCallback((tileId) => {
     setSelectedTiles((prev) => {
@@ -81,6 +110,7 @@ export function useTileSelector() {
     if (selectedTiles.size === 0) return;
     setInferencePhase("running");
     setInferenceMessage("");
+    console.log(`[inference] submitting ${selectedTiles.size} tile(s)…`);
     try {
       const res = await fetch("/api/apply-model", {
         method:  "POST",
@@ -89,8 +119,10 @@ export function useTileSelector() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { job_id } = await res.json();
+      console.log(`[inference] job_id received: ${job_id}`);
       setInferenceJobId(job_id);
     } catch (err) {
+      console.error("[inference] failed to start:", err);
       setInferencePhase("error");
       setInferenceMessage(err.message);
     }
