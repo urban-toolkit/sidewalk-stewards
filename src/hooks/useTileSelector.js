@@ -17,7 +17,12 @@ function buildGeoJSON(tileIds) {
   return { type: "FeatureCollection", features };
 }
 
-export function useTileSelector() {
+/**
+ * @param {object} options
+ * @param {() => void} [options.onDone] – called after inference completes successfully.
+ *   Use this to reload network + polygon data in the parent.
+ */
+export function useTileSelector({ onDone } = {}) {
   const [brushActive,   setBrushActive]   = useState(false);
   const [selectedTiles, setSelectedTiles] = useState(new Set());
   const [previewTiles,  setPreviewTiles]  = useState(new Set());
@@ -25,6 +30,10 @@ export function useTileSelector() {
   const [inferencePhase,   setInferencePhase]   = useState("idle");
   const [inferenceJobId,   setInferenceJobId]   = useState(null);
   const [inferenceMessage, setInferenceMessage] = useState("");
+
+  // Keep latest onDone in a ref so the polling effect never goes stale
+  const onDoneRef = useRef(onDone);
+  useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
 
   // Drag refs — no re-render during mousemove
   const dragStart  = useRef(null);
@@ -65,7 +74,16 @@ export function useTileSelector() {
 
         if (status === "done") {
           clearInterval(id);
-          console.log("[inference] done ✓");
+          console.log("[inference] done ✓ — reloading data and clearing selection");
+
+          // Deselect all tiles immediately
+          setSelectedTiles(new Set());
+
+          // Fire the reload callback (reloads network + polygons in App.jsx)
+          try { onDoneRef.current?.(); } catch (err) {
+            console.warn("[inference] onDone callback threw:", err);
+          }
+
           setInferencePhase("done");
         } else if (status === "error") {
           clearInterval(id);

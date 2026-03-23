@@ -181,7 +181,7 @@ export function MapView({
         <StreetViewPanel panel={svPanel} onClose={closeSV} onPanoChange={onPanoChange} />
       </div>
 
-      {children({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef })}
+      {children({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef, reloadNetwork })}
     </>
   );
 }

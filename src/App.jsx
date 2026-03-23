@@ -144,7 +144,7 @@ export default function App() {
   const [macroFilterIds, setMacroFilterIds] = useState(null);
   const { meta8x8, meta2x2 } = useMetadata();
   const { validMeta8x8, validating } = useValidMeta(meta8x8);
-  const { suggestions } = useSuggestions();
+  const { suggestions, reload: reloadSuggestions } = useSuggestions();
 
   // ── Suggestion selection state ───────────────────────────────────────────────
   const [selectedKeys, setSelectedKeys] = useState(new Set());
@@ -163,8 +163,15 @@ export default function App() {
     return features;
   }, [selectedKeys, suggestions]);
 
+  const reloadNetworkRef = useRef(null);
+
+  const handleInferenceDone = useCallback(() => {
+    reloadNetworkRef.current?.();
+    reloadSuggestions();
+  }, [reloadSuggestions]);
+
   // ── Tile selector (brush) — state lives here, layer wired inside render prop ──
-  const tileSelector = useTileSelector();
+  const tileSelector = useTileSelector({ onDone: handleInferenceDone });
 
   // ── Training state ───────────────────────────────────────────────────────────
   // phase: "idle" | "confirming" | "training" | "done" | "error"
@@ -260,7 +267,9 @@ export default function App() {
         selectedTiles={tileSelector.selectedTiles}
         previewTiles={tileSelector.previewTiles}
       >
-        {({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef }) => {
+        {({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef, reloadNetwork }) => {
+          reloadNetworkRef.current = reloadNetwork;
+          
           const { tiles, viewportTileIds, activeMeta, activeMetaById, viewLevel } = useTiles({
             bounds, mapZoom,
             meta8x8: validMeta8x8,
@@ -355,8 +364,9 @@ export default function App() {
                     selectedCount={tileSelector.selectedTiles.size}
                     clearAll={tileSelector.clearAll}
                     runModel={tileSelector.runModel}
-                    inferencePhase={tileSelector.inferencePhase}       // ✓
-                    dismissInference={tileSelector.dismissInference}   // ✓
+                    inferencePhase={tileSelector.inferencePhase}
+                    dismissInference={tileSelector.dismissInference}
+                    inferenceMessage={tileSelector.inferenceMessage}
                   />
                 </div>
               )}
