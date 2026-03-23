@@ -119,3 +119,54 @@ async def get_status(job_id: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job
+
+APPLY_MODEL_SCRIPT = Path(os.environ["SCRIPT_PATH"]) / "apply_model.py"
+ORIGINAL_POLYGONS  = Path(os.environ["ORIGINAL_POLYGONS"])
+ORIGINAL_NETWORK   = Path(os.environ["ORIGINAL_NETWORK"])
+OUTPUT_POLYGONS    = Path(os.environ["OUTPUT_POLYGONS"])
+OUTPUT_NETWORK     = Path(os.environ["OUTPUT_NETWORK"])
+
+inference_jobs: dict[str, dict] = {}
+
+def _run_inference(job_id: str, tile_ids: list[str]) -> None:
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, str(APPLY_MODEL_SCRIPT),
+                "--tile_ids",          *tile_ids,
+                "--model_path",        str(MODEL_OUTPUT),
+                "--tiles_dir",         str(TILES_DIR),
+                "--t2n_dir",           str(T2N_DIR),
+                "--conf_dir",          str(CONF_DIR),
+                "--original_polygons", str(ORIGINAL_POLYGONS),
+                "--original_network",  str(ORIGINAL_NETWORK),
+                "--output_polygons",   str(OUTPUT_POLYGONS),
+                "--output_network",    str(OUTPUT_NETWORK),
+                "--head", "fix",
+            ],
+            capture_output=True, text=True,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        )
+        if result.returncode == 0:
+            inference_jobs[job_id] = {"status": "done", "message": ""}
+        else:
+            inference_jobs[job_id] = {"status": "error", "message": result.stderr[-500:]}
+    except Exception as exc:
+        inference_jobs[job_id] = {"status": "error", "message": str(exc)}
+
+@app.post("/api/apply-model")
+async def start_inference(body: dict) -> dict:
+    tile_ids = body.get("tileIds", [])
+    if not tile_ids:
+        raise HTTPException(status_code=400, detail="No tile IDs provided.")
+    job_id = str(uuid.uuid4())
+    inference_jobs[job_id] = {"status": "running", "message": ""}
+    threading.Thread(target=_run_inference, args=(job_id, tile_ids), daemon=True).start()
+    return {"job_id": job_id}
+
+@app.get("/api/apply-model/status/{job_id}")
+async def get_inference_status(job_id: str) -> dict:
+    job = inference_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job

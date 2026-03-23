@@ -48,3 +48,48 @@ export function tilesForBounds(bounds, z) {
   tiles.sort((a, b) => a.y - b.y || a.x - b.x);
   return tiles;
 }
+
+// Get [west, south, east, north] lon/lat for a zoom-18 tile
+export function tile18Bounds(x, y) {
+  const n    = 2 ** 18;
+  const west = (x / n) * 360 - 180;
+  const east = ((x + 1) / n) * 360 - 180;
+  const latRad = (rad) => (Math.atan(Math.sinh(rad)) * 180) / Math.PI;
+  const north  = latRad(Math.PI * (1 - (2 * y) / n));
+  const south  = latRad(Math.PI * (1 - (2 * (y + 1)) / n));
+  return [west, south, east, north];
+}
+ 
+/**
+ * Given a lng/lat point, return the zoom-18 tile ID string "x_y".
+ */
+export function lngLatToTile18(lng, lat) {
+  const n      = 2 ** 18;
+  const x      = Math.floor(((lng + 180) / 360) * n);
+  const latRad = (lat * Math.PI) / 180;
+  const y      = Math.floor(
+    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n
+  );
+  return `${x}_${y}`;
+}
+ 
+/**
+ * Build a GeoJSON FeatureCollection of tile bounding-box polygons
+ * for a Set of zoom-18 tile ID strings.
+ */
+export function selectedTilesToGeoJSON(tileIds) {
+  const features = [...tileIds].map((tid) => {
+    const [x, y]       = tid.split("_").map(Number);
+    const [w, s, e, n] = tile18Bounds(x, y);
+    return {
+      type: "Feature",
+      properties: { tile_id: tid },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]],
+      },
+    };
+  });
+  return { type: "FeatureCollection", features };
+}
+ 

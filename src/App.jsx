@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { MapView } from "./components/Map";
 import { useMetadata } from "./hooks/useMetadata";
 import { useValidMeta } from "./hooks/useValidMeta";
@@ -7,9 +7,13 @@ import { useTileBorders } from "./hooks/useTileBorders";
 import { useSuggestions } from "./hooks/useSuggestions";
 import { useSuggestionLayer } from "./hooks/useSuggestionLayer";
 import { useSelectedSuggestionsLayer } from "./hooks/useSelectedSuggestionsLayer";
+import { useTileSelector } from "./hooks/useTileSelector";
+import { useTileSelectorLayer } from "./hooks/useTileSelectorLayer";
 import { TileRow } from "./components/TileRow";
 import { ParallelCoordinateChart } from "./components/ParallelCoordinateChart";
+import { BrushControls } from "./components/BrushControls";
 import { tileToLngLatBounds } from "./utils/tileUtils";
+
 import "./App.css";
 
 const VIEW_LABELS    = { macro: "8 × 8 Tiles",  meso: "2 × 2 Tiles", micro: "2 × 2 Tiles" };
@@ -142,7 +146,7 @@ export default function App() {
   const { validMeta8x8, validating } = useValidMeta(meta8x8);
   const { suggestions } = useSuggestions();
 
-  // ── Selection state ──────────────────────────────────────────────────────────
+  // ── Suggestion selection state ───────────────────────────────────────────────
   const [selectedKeys, setSelectedKeys] = useState(new Set());
 
   const selectedFeatures = useMemo(() => {
@@ -158,6 +162,9 @@ export default function App() {
     }
     return features;
   }, [selectedKeys, suggestions]);
+
+  // ── Tile selector (brush) — state lives here, layer wired inside render prop ──
+  const tileSelector = useTileSelector();
 
   // ── Training state ───────────────────────────────────────────────────────────
   // phase: "idle" | "confirming" | "training" | "done" | "error"
@@ -245,7 +252,13 @@ export default function App() {
         </div>
       )}
 
-      <MapView meta2x2={meta2x2} sortKey={sortKey} filterIds={macroFilterIds}>
+      <MapView
+        meta2x2={meta2x2}
+        sortKey={sortKey}
+        filterIds={macroFilterIds}
+        brushActive={tileSelector.brushActive}
+        selectedTiles={tileSelector.selectedTiles}
+      >
         {({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef }) => {
           const { tiles, viewportTileIds, activeMeta, activeMetaById, viewLevel } = useTiles({
             bounds, mapZoom,
@@ -270,6 +283,18 @@ export default function App() {
           }, []);
 
           useTileBorders(mapRef, tiles, focusTile);
+
+          // ── Wire tile selector MapLibre layers ──────────────────────────────
+          // Disabled at macro; the hook internally no-ops when enabled=false
+          useTileSelectorLayer(mapRef, {
+            brushActive:      tileSelector.brushActive,
+            geojson:          tileSelector.geojson,
+            toggleTile:       tileSelector.toggleTile,
+            addTilesInBounds: tileSelector.addTilesInBounds,
+            dragStart:        tileSelector.dragStart,
+            isDragging:       tileSelector.isDragging,
+            enabled:          viewLevel !== "macro",
+          });
 
           const focusTileSuggestions = focusTile
             ? (suggestions?.get(focusTile.id) ?? null)
@@ -307,127 +332,155 @@ export default function App() {
             ? Math.round((trainingProgress.epoch / trainingProgress.total) * 100)
             : 0;
 
+          // The render prop returns a fragment: BrushControls floats over the
+          // map (position: absolute relative to MapView's position: relative
+          // container), rightPane sits in its usual position on the right.
           return (
-            <div className={`rightPane ${viewLevel}`}>
-              {/* ── Header ── */}
-              <div className="header">
-                <div>
-                  <div className="title">
-                    {VIEW_LABELS[viewLevel]}
-                    <span className="levelBadge">{LEVEL_BADGES[viewLevel]}</span>
-                  </div>
-                  <div className="sub">
-                    {!activeMeta
-                      ? LOADING_LABELS[viewLevel]
-                      : viewLevel === "micro" && focusTile
-                      ? `Tile ${focusTile.id} · Zoom ${mapZoom.toFixed(2)}`
-                      : bounds
-                      ? `Zoom ${mapZoom.toFixed(2)} · W ${bounds.west.toFixed(4)} · S ${bounds.south.toFixed(4)} · E ${bounds.east.toFixed(4)} · N ${bounds.north.toFixed(4)}`
-                      : "Waiting for map..."}
-                  </div>
+            <>
+              {/* ── Brush controls — floats over map, meso/micro only ── */}
+              {viewLevel !== "macro" && (
+                <div style={{
+                  position: "absolute",
+                  top: 12,
+                  left: 12,
+                  zIndex: 20,
+                  // pointer-events: none on wrapper; BrushControls sets
+                  // pointer-events: all on the individual buttons internally
+                  pointerEvents: "none",
+                }}>
+                  <BrushControls
+                    brushActive={tileSelector.brushActive}
+                    toggleBrush={tileSelector.toggleBrush}
+                    selectedCount={tileSelector.selectedTiles.size}
+                    clearAll={tileSelector.clearAll}
+                    runModel={tileSelector.runModel}
+                    isRunning={tileSelector.isRunning}
+                    runStatus={tileSelector.runStatus}
+                  />
                 </div>
-                <div className="controls">
-                  <div className="count">
-                    {viewLevel !== "micro" && (
-                    macroFilterIds !== null && viewLevel === "macro"
-                      ? `${tiles.length} of ${meta8x8?.length ?? "?"} tiles`
-                      : `${tiles.length} tiles`
-                  )}
+              )}
+
+              <div className={`rightPane ${viewLevel}`}>
+                {/* ── Header ── */}
+                <div className="header">
+                  <div>
+                    <div className="title">
+                      {VIEW_LABELS[viewLevel]}
+                      <span className="levelBadge">{LEVEL_BADGES[viewLevel]}</span>
+                    </div>
+                    <div className="sub">
+                      {!activeMeta
+                        ? LOADING_LABELS[viewLevel]
+                        : viewLevel === "micro" && focusTile
+                        ? `Tile ${focusTile.id} · Zoom ${mapZoom.toFixed(2)}`
+                        : bounds
+                        ? `Zoom ${mapZoom.toFixed(2)} · W ${bounds.west.toFixed(4)} · S ${bounds.south.toFixed(4)} · E ${bounds.east.toFixed(4)} · N ${bounds.north.toFixed(4)}`
+                        : "Waiting for map..."}
+                    </div>
                   </div>
-
-                  {/* Train button */}
-                  {trainingPhase === "idle" && selectedKeys.size > 0 && (
-                    <button className="trainBtn" onClick={handleTrainClick}>
-                      Train model · {selectedKeys.size}
-                    </button>
-                  )}
-
-                  {/* Training status pill */}
-                  {trainingPhase !== "idle" && trainingPhase !== "confirming" && (
-                    <div className={`trainingStatus ${trainingPhase}`}>
-                      {trainingPhase === "training" && (
-                        <>
-                          <span className="trainingStatusSpinner" />
-                          <span>Training…</span>
-                          <div className="trainingProgressBar">
-                            <div className="trainingProgressFill" style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className="trainingProgressPct">{pct}%</span>
-                        </>
-                      )}
-                      {trainingPhase === "done" && (
-                        <>
-                          Model trained
-                          <button className="trainingStatusDismiss" onClick={handleTrainDismiss}>✕</button>
-                        </>
-                      )}
-                      {trainingPhase === "error" && (
-                        <>
-                          Training failed
-                          <button className="trainingStatusDismiss" onClick={handleTrainDismiss}>✕</button>
-                        </>
+                  <div className="controls">
+                    <div className="count">
+                      {viewLevel !== "micro" && (
+                        macroFilterIds !== null && viewLevel === "macro"
+                          ? `${tiles.length} of ${meta8x8?.length ?? "?"} tiles`
+                          : `${tiles.length} tiles`
                       )}
                     </div>
-                  )}
+
+                    {/* Train button */}
+                    {trainingPhase === "idle" && selectedKeys.size > 0 && (
+                      <button className="trainBtn" onClick={handleTrainClick}>
+                        Train model · {selectedKeys.size}
+                      </button>
+                    )}
+
+                    {/* Training status pill */}
+                    {trainingPhase !== "idle" && trainingPhase !== "confirming" && (
+                      <div className={`trainingStatus ${trainingPhase}`}>
+                        {trainingPhase === "training" && (
+                          <>
+                            <span className="trainingStatusSpinner" />
+                            <span>Training…</span>
+                            <div className="trainingProgressBar">
+                              <div className="trainingProgressFill" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="trainingProgressPct">{pct}%</span>
+                          </>
+                        )}
+                        {trainingPhase === "done" && (
+                          <>
+                            Model trained
+                            <button className="trainingStatusDismiss" onClick={handleTrainDismiss}>✕</button>
+                          </>
+                        )}
+                        {trainingPhase === "error" && (
+                          <>
+                            Training failed
+                            <button className="trainingStatusDismiss" onClick={handleTrainDismiss}>✕</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* ── PCP (macro only) ── */}
+                {viewLevel === "macro" && (
+                  validating
+                    ? <div className="pcpWrapper" style={{ padding: "12px", fontSize: 11, color: "#888" }}>Checking tiles…</div>
+                    : validMeta8x8 && (
+                      <ParallelCoordinateChart
+                        data={validMeta8x8}
+                        visibleIds={viewportTileIds}
+                        sortKey={sortKey}
+                        onSortChange={setSortKey}
+                        onFilterChange={setMacroFilterIds}
+                      />
+                    )
+                )}
+
+                {/* ── Content ── */}
+                {viewLevel === "micro" && focusTile ? (
+                  <div className="microSuggestionsList">
+                    {microSuggestions.length > 0
+                      ? microSuggestions.map(([n, features]) => (
+                          <MicroCard
+                            key={n}
+                            tile={focusTile}
+                            networkData={networkData}
+                            features={features}
+                            size={OVERLAY_SIZE}
+                            selected={selectedKeys.has(`${focusTile.id}:${n}`)}
+                            onToggle={() => toggleSuggestion(focusTile.id, n)}
+                          />
+                        ))
+                      : (
+                          <div className="microNoSuggestions">
+                            No suggestions for this area
+                          </div>
+                        )}
+                  </div>
+                ) : (
+                  <div className={viewLevel === "macro" ? "macroGrid" : "list"}>
+                    {displayTiles.map((t) => (
+                      <TileRow
+                        key={`${t.z}_${t.id}`}
+                        tile={t}
+                        meta={activeMetaById?.get(t.id)}
+                        sortKey={sortKey}
+                        onClick={getClickHandler(t)}
+                        showSuggestions={showSuggestions}
+                        networkData={networkData}
+                        thumbSize={thumbSize}
+                        tileSuggestions={suggestions?.get(t.id) ?? null}
+                        selectedKeys={selectedKeys}
+                        onToggleSuggestion={toggleSuggestion}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-
-              {/* ── PCP (macro only) ── */}
-              {viewLevel === "macro" && (
-                validating
-                  ? <div className="pcpWrapper" style={{ padding: "12px", fontSize: 11, color: "#888" }}>Checking tiles…</div>
-                  : validMeta8x8 && (
-                    <ParallelCoordinateChart
-                      data={validMeta8x8}
-                      visibleIds={viewportTileIds}
-                      sortKey={sortKey}
-                      onSortChange={setSortKey}
-                      onFilterChange={setMacroFilterIds}
-                    />
-                  )
-              )}
-
-              {/* ── Content ── */}
-              {viewLevel === "micro" && focusTile ? (
-                <div className="microSuggestionsList">
-                  {microSuggestions.length > 0
-                    ? microSuggestions.map(([n, features]) => (
-                        <MicroCard
-                          key={n}
-                          tile={focusTile}
-                          networkData={networkData}
-                          features={features}
-                          size={OVERLAY_SIZE}
-                          selected={selectedKeys.has(`${focusTile.id}:${n}`)}
-                          onToggle={() => toggleSuggestion(focusTile.id, n)}
-                        />
-                      ))
-                    : (
-                        <div className="microNoSuggestions">
-                          No suggestions for this area
-                        </div>
-                      )}
-                </div>
-              ) : (
-                <div className={viewLevel === "macro" ? "macroGrid" : "list"}>
-                  {displayTiles.map((t) => (
-                    <TileRow
-                      key={`${t.z}_${t.id}`}
-                      tile={t}
-                      meta={activeMetaById?.get(t.id)}
-                      sortKey={sortKey}
-                      onClick={getClickHandler(t)}
-                      showSuggestions={showSuggestions}
-                      networkData={networkData}
-                      thumbSize={thumbSize}
-                      tileSuggestions={suggestions?.get(t.id) ?? null}
-                      selectedKeys={selectedKeys}
-                      onToggleSuggestion={toggleSuggestion}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+            </>
           );
         }}
       </MapView>

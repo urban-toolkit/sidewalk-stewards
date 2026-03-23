@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMap } from "../hooks/useMap";
 import { useHeatmap } from "../hooks/useHeatmap";
 import { useNetworkEditor } from "../hooks/useNetworkEditor";
@@ -6,6 +6,7 @@ import { useNetworkData } from "../hooks/useNetworkData";
 import { useStreetView } from "../hooks/useStreetView";
 import { NetworkEditorMenu } from "./NetworkEditorMenu";
 import { StreetViewPanel } from "./StreetViewPanel";
+import { tileToLngLatBounds } from "../utils/tileUtils";
 
 function formatValue(v) {
   if (v === undefined || v === null) return "—";
@@ -14,7 +15,100 @@ function formatValue(v) {
   return v.toFixed(2);
 }
 
-export function MapView({ meta2x2, sortKey, filterIds = null, children }) {
+// ── Tile selector checkbox overlay ───────────────────────────────────────────
+// Renders a small checkbox at the NW corner of every selected tile,
+// plus semi-transparent checkbox outlines for preview tiles (under the drag rect).
+// Uses map.project() + map "move"/"zoom" events to stay in sync with the canvas.
+
+function TileSelectorOverlay({ mapRef, selectedTiles, previewTiles, brushActive }) {
+  const [positions, setPositions] = useState([]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    // Combine selected + preview into one projection pass
+    const allTiles = new Set([...selectedTiles, ...previewTiles]);
+
+    if (!map || !brushActive || allTiles.size === 0) {
+      setPositions([]);
+      return;
+    }
+
+    const reproject = () => {
+      const pts = [];
+      for (const tid of allTiles) {
+        const [x, y] = tid.split("_").map(Number);
+        const [w, , , n] = tileToLngLatBounds(x, y, 18); // NW corner
+        const px = map.project([w, n]);
+        pts.push({
+          tid,
+          px: px.x,
+          py: px.y,
+          isPreview: previewTiles.has(tid) && !selectedTiles.has(tid),
+        });
+      }
+      setPositions(pts);
+    };
+
+    reproject();
+    map.on("move", reproject);
+    map.on("zoom", reproject);
+    return () => {
+      map.off("move", reproject);
+      map.off("zoom", reproject);
+    };
+  }, [mapRef, selectedTiles, previewTiles, brushActive]);
+
+  if (!brushActive || positions.length === 0) return null;
+
+  return (
+    <>
+      {positions.map(({ tid, px, py, isPreview }) => (
+        <div
+          key={tid}
+          style={{
+            position:        "absolute",
+            left:            px + 5,
+            top:             py + 5,
+            width:           16,
+            height:          16,
+            borderRadius:    4,
+            background:      isPreview ? "rgba(74,144,217,0.25)" : "#4a90d9",
+            border:          isPreview ? "1.5px solid #4a90d9" : "1.5px solid #fff",
+            boxShadow:       "0 1px 4px rgba(0,0,0,0.2)",
+            display:         "flex",
+            alignItems:      "center",
+            justifyContent:  "center",
+            pointerEvents:   "none",
+            zIndex:          10,
+            transition:      "background 0.1s",
+          }}
+        >
+          {!isPreview && (
+            <svg viewBox="0 0 12 12" width="10" height="10">
+              <path
+                d="M2.5 6l2.5 2.5 4.5-5"
+                fill="none" stroke="#fff"
+                strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+// ── MapView ───────────────────────────────────────────────────────────────────
+
+export function MapView({
+  meta2x2,
+  sortKey,
+  filterIds  = null,
+  brushActive = false,
+  selectedTiles,
+  previewTiles,
+  children,
+}) {
   const { mapContainerRef, mapRef, bounds, mapZoom, flyToTile, fitToTile } = useMap();
   const [heatmapOn, setHeatmapOn] = useState(true);
 
@@ -24,7 +118,8 @@ export function MapView({ meta2x2, sortKey, filterIds = null, children }) {
   const { contextMenu, setContextMenu, splitEdge, deleteNode, saveNetwork, dirty, saving } =
     useNetworkEditor(mapRef, networkData);
 
-  const { panel: svPanel, closePanel: closeSV, onPanoChange } = useStreetView(mapRef, mapZoom);
+  const { panel: svPanel, closePanel: closeSV, onPanoChange } =
+    useStreetView(mapRef, mapZoom, brushActive);
 
   const handleSave = async () => {
     await saveNetwork();
@@ -33,9 +128,15 @@ export function MapView({ meta2x2, sortKey, filterIds = null, children }) {
 
   return (
     <>
-      {/* ── Map pane ───────────────────────────────────────────────── */}
       <div className="leftPane" style={{ position: "relative" }}>
         <div ref={mapContainerRef} className="map" />
+
+        <TileSelectorOverlay
+          mapRef={mapRef}
+          selectedTiles={selectedTiles ?? new Set()}
+          previewTiles={previewTiles   ?? new Set()}
+          brushActive={brushActive}
+        />
 
         <NetworkEditorMenu
           contextMenu={contextMenu}
@@ -45,11 +146,7 @@ export function MapView({ meta2x2, sortKey, filterIds = null, children }) {
         />
 
         {dirty && (
-          <button
-            className="saveNetworkBtn"
-            onClick={handleSave}
-            disabled={saving}
-          >
+          <button className="saveNetworkBtn" onClick={handleSave} disabled={saving}>
             {saving ? "Saving…" : "Save network"}
           </button>
         )}
@@ -79,15 +176,9 @@ export function MapView({ meta2x2, sortKey, filterIds = null, children }) {
           </div>
         )}
 
-        {/* ── Street view panel ─────────────────────────────────────── */}
-        <StreetViewPanel
-          panel={svPanel}
-          onClose={closeSV}
-          onPanoChange={onPanoChange}
-        />
+        <StreetViewPanel panel={svPanel} onClose={closeSV} onPanoChange={onPanoChange} />
       </div>
 
-      {/* ── Right pane (render prop) ────────────────────────────────── */}
       {children({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef })}
     </>
   );
