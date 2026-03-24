@@ -267,7 +267,7 @@ export default function App() {
         selectedTiles={tileSelector.selectedTiles}
         previewTiles={tileSelector.previewTiles}
       >
-        {({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef, reloadNetwork }) => {
+        {({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef, reloadNetwork, dirty, saving, handleSave }) => {
           reloadNetworkRef.current = reloadNetwork;
           
           const { tiles, viewportTileIds, activeMeta, activeMetaById, viewLevel } = useTiles({
@@ -343,22 +343,32 @@ export default function App() {
             ? Math.round((trainingProgress.epoch / trainingProgress.total) * 100)
             : 0;
 
-          // The render prop returns a fragment: BrushControls floats over the
-          // map (position: absolute relative to MapView's position: relative
-          // container), rightPane sits in its usual position on the right.
           return (
             <>
-              {/* ── Brush controls — floats over map, meso/micro only ── */}
               {viewLevel !== "macro" && (
                 <div style={{
                   position: "absolute",
                   top: 12,
                   left: 12,
                   zIndex: 20,
-                  // pointer-events: none on wrapper; BrushControls sets
-                  // pointer-events: all on the individual buttons internally
                   pointerEvents: "none",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: 8,
                 }}>
+                  {/* Save network — sits above brush controls */}
+                  {dirty && (
+                    <button
+                      className="saveNetworkBtn"
+                      onClick={handleSave}
+                      disabled={saving}
+                      style={{ pointerEvents: "all", position: "static" }}
+                    >
+                      {saving ? "Saving…" : "Save network"}
+                    </button>
+                  )}
+
                   <BrushControls
                     brushActive={tileSelector.brushActive}
                     selectedCount={tileSelector.selectedTiles.size}

@@ -147,12 +147,6 @@ export function MapView({
           deleteNode={deleteNode}
         />
 
-        {dirty && (
-          <button className="saveNetworkBtn" onClick={handleSave} disabled={saving}>
-            {saving ? "Saving…" : "Save network"}
-          </button>
-        )}
-
         {mapZoom < 16 && (
           <div className="mapOverlayControl">
             <label className="toggleLabel">
@@ -181,7 +175,7 @@ export function MapView({
         <StreetViewPanel panel={svPanel} onClose={closeSV} onPanoChange={onPanoChange} />
       </div>
 
-      {children({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef, reloadNetwork })}
+      {children({ bounds, mapZoom, flyToTile, fitToTile, networkData, mapRef, reloadNetwork, dirty, saving, handleSave })}
     </>
   );
 }
