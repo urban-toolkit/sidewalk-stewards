@@ -1,2 +1,16 @@
 fastapi
 uvicorn
+geopandas
+numpy
+pandas
+pyproj
+rasterio
+shapely
+torch
+segmentation-models-pytorch
+opencv-python
+Pillow
+matplotlib
+scipy
+python-dotenv
+tqdm
