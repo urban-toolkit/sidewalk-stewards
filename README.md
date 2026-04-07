@@ -106,8 +106,6 @@ stewards_files/
         └── output/                 ← Placeholder model weights live here
 ```
 
-> **Note:** The `public/polygons.geojson` and `public/network.geojson` files are included in the same release. Download them and place them in the `public/` folder at the project root.
-
 ---
 
 ## Step 3 — Create Your `.env` File
@@ -130,6 +128,9 @@ GT_DIR=C:/Users/your_user/path/to/stewards/backend/stewards_files/boston/masks_g
 # ── Global GeoJSON files (served from /public) ──
 ORIGINAL_POLYGONS=C:/Users/your_user/path/to/stewards/public/polygons.geojson
 ORIGINAL_NETWORK=C:/Users/your_user/path/to/stewards/public/network.geojson
+OUTPUT_POLYGONS=C:/Users/your_user/path/to/stewards/public/polygons.geojson
+OUTPUT_NETWORK=C:/Users/your_user/path/to/stewards/public/network.geojson
+
 
 # ── Directory where trained model checkpoints are saved ──
 TRANED_MODEL_OUTPUT=C:/Users/your_user/path/to/stewards/backend/stewards_files/boston/stewards_scripts/output
