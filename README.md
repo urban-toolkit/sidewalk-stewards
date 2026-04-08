@@ -1,6 +1,8 @@
-# Stewards — Setup Guide
-
-Stewards is a visual analytics tool for pedestrian network mapping and repair. 
+# Sidewalk Stewards
+ 
+![Sidewalk Stewards](./public/sidewalk-stewards.png)
+ 
+Stewards is a visual analytics tool for detecting, verifying, and repairing pedestrian network errors from aerial imagery through an interactive human-in-the-loop workflow.
 
 > **About the included data and model**
 >
